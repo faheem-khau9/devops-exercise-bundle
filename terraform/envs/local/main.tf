@@ -24,6 +24,22 @@ provider "kubernetes" {
   config_path = module.cluster.kubeconfig_path
 }
 
+# ── Add Helm repos to local cache (Helm provider requires this) ───────────────
+
+resource "null_resource" "helm_repos" {
+  provisioner "local-exec" {
+    command = <<-EOT
+      helm repo add jetstack https://charts.jetstack.io
+      helm repo add argo https://argoproj.github.io/argo-helm
+      helm repo add external-secrets https://charts.external-secrets.io
+      helm repo add kyverno https://kyverno.github.io/kyverno/
+      helm repo update
+    EOT
+  }
+
+  depends_on = [module.cluster]
+}
+
 # ── cert-manager (ArgoCD dependency) ─────────────────────────────────────────
 
 resource "helm_release" "cert_manager" {
@@ -39,7 +55,7 @@ resource "helm_release" "cert_manager" {
     value = "true"
   }
 
-  depends_on = [module.cluster]
+  depends_on = [null_resource.helm_repos]
 }
 
 # ── ArgoCD ────────────────────────────────────────────────────────────────────
@@ -57,7 +73,7 @@ resource "helm_release" "argocd" {
     value = "ClusterIP"
   }
 
-  depends_on = [module.cluster, helm_release.cert_manager]
+  depends_on = [null_resource.helm_repos, helm_release.cert_manager]
 }
 
 # ── External Secrets Operator ─────────────────────────────────────────────────
@@ -70,7 +86,7 @@ resource "helm_release" "external_secrets" {
   namespace        = "external-secrets"
   create_namespace = true
 
-  depends_on = [module.cluster]
+  depends_on = [null_resource.helm_repos]
 }
 
 # ── Kyverno ───────────────────────────────────────────────────────────────────
@@ -83,7 +99,7 @@ resource "helm_release" "kyverno" {
   namespace        = "kyverno"
   create_namespace = true
 
-  depends_on = [module.cluster]
+  depends_on = [null_resource.helm_repos]
 }
 
 # ── Wait for ArgoCD to be ready before applying CRD resources ────────────────
