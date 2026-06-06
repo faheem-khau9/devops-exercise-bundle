@@ -37,7 +37,7 @@ resource "null_resource" "helm_repos" {
     EOT
   }
 
-  depends_on = [null_resource.helm_repos]
+  depends_on = [module.cluster]
 }
 
 # ── cert-manager ──────────────────────────────────────────────────────────────
@@ -46,7 +46,7 @@ resource "helm_release" "cert_manager" {
   name             = "cert-manager"
   repository       = "https://charts.jetstack.io"
   chart            = "cert-manager"
-  version          = "1.14.4"
+  version          = "v1.14.4"
   namespace        = "cert-manager"
   create_namespace = true
 
@@ -132,6 +132,8 @@ resource "null_resource" "wait_for_eso" {
       export KUBECONFIG="${module.cluster.kubeconfig_path}"
       kubectl -n external-secrets wait --for=condition=available --timeout=180s deployment/external-secrets
       kubectl -n external-secrets wait --for=condition=available --timeout=180s deployment/external-secrets-webhook
+      kubectl wait --for=condition=established --timeout=120s crd/clustersecretstores.external-secrets.io
+      kubectl wait --for=condition=established --timeout=120s crd/externalsecrets.external-secrets.io
     EOT
   }
 
