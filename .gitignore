@@ -16,6 +16,7 @@ crash.*.log
 # Kubeconfig / cluster state
 *.kubeconfig
 kubeconfig*
+*-config
 
 # Editor / OS
 .DS_Store
