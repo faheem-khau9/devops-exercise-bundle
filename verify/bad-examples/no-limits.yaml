@@ -1,0 +1,14 @@
+# Deliberately violating manifest: a Pod without resource limits.
+# Must be rejected by the candidate's `require-resource-limits` Kyverno policy.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: bad-no-limits
+  namespace: sample-app
+  labels:
+    test: kyverno-violator
+spec:
+  containers:
+    - name: app
+      image: traefik/whoami:v1.10.4
+      # NOTE: deliberately missing resources block

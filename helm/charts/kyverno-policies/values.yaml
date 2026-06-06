@@ -1,0 +1,4 @@
+# Namespaces to exclude from policy enforcement.
+excludedNamespaces:
+  - kube-system
+  - kyverno

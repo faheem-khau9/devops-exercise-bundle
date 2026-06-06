@@ -1,0 +1,83 @@
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-resource-limits
+  annotations:
+    # Disable Kyverno's autogen to prevent ArgoCD drift on the spec.rules field.
+    pod-policies.kyverno.io/autogen-controllers: "none"
+    policies.kyverno.io/title: Require Resource Limits
+    policies.kyverno.io/description: >-
+      Deny any Pod whose containers do not declare both
+      resources.limits.cpu and resources.limits.memory.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: check-resource-limits
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                {{- range .Values.excludedNamespaces }}
+                - {{ . }}
+                {{- end }}
+      validate:
+        message: "All containers must declare resources.limits.cpu and resources.limits.memory."
+        foreach:
+          - list: "request.object.spec.containers"
+            deny:
+              conditions:
+                any:
+                  - key: "{{ `{{element.resources.limits.cpu}}` }}"
+                    operator: Equals
+                    value: ""
+                  - key: "{{ `{{element.resources.limits.memory}}` }}"
+                    operator: Equals
+                    value: ""
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-latest-tag
+  annotations:
+    # Disable Kyverno's autogen to prevent ArgoCD drift on the spec.rules field.
+    pod-policies.kyverno.io/autogen-controllers: "none"
+    policies.kyverno.io/title: Disallow Latest Tag
+    policies.kyverno.io/description: >-
+      Deny any Pod whose container image uses :latest tag or has no tag at all.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: check-image-tag
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                {{- range .Values.excludedNamespaces }}
+                - {{ . }}
+                {{- end }}
+      validate:
+        message: "Container images must use a pinned tag — :latest and untagged images are not allowed."
+        foreach:
+          - list: "request.object.spec.containers"
+            deny:
+              conditions:
+                any:
+                  - key: "{{ `{{element.image}}` }}"
+                    operator: Equals
+                    value: "*:latest"
+                  - key: "{{ `{{element.image}}` }}"
+                    operator: NotContains
+                    value: ":"

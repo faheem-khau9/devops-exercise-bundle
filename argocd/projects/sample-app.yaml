@@ -1,0 +1,24 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: sample-app
+  namespace: argocd
+spec:
+  description: AppProject for the sample application (local + stage)
+  sourceRepos:
+    - https://github.com/faheem-khau9/devops-exercise-bundle.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: sample-app
+    - server: https://kubernetes.default.svc
+      namespace: sample-app-stage
+    - server: https://kubernetes.default.svc
+      namespace: kyverno
+  clusterResourceWhitelist:
+    - group: "kyverno.io"
+      kind: ClusterPolicy
+    - group: "kyverno.io"
+      kind: ClusterCleanupPolicy
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"

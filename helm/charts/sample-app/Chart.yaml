@@ -1,0 +1,12 @@
+apiVersion: v2
+name: sample-app
+description: Sample HTTP echo app wrapping the public traefik/whoami image. DO NOT MODIFY — provided by the exercise bundle. Write your overlays in a values.*.yaml file in your own Terraform env directory.
+type: application
+version: 1.0.0
+appVersion: "v1.10.4"
+keywords:
+  - sample
+  - whoami
+maintainers:
+  - name: KAD Global Agency
+    email: muhammed.khan@truxel.ai

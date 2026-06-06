@@ -1,0 +1,14 @@
+# Deliberately violating manifest: violates BOTH require-resource-limits AND
+# disallow-latest-tag. Must be rejected by the candidate's Kyverno policies.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: bad-both
+  namespace: sample-app
+  labels:
+    test: kyverno-violator
+spec:
+  containers:
+    - name: app
+      image: nginx:latest # deliberately :latest
+      # deliberately missing resources block

@@ -1,0 +1,4 @@
+cluster_name       = "devops-exercise"
+node_count         = 1
+kubernetes_version = "v1.28.0"
+git_repo_url       = "https://github.com/faheem-khau9/devops-exercise-bundle.git"

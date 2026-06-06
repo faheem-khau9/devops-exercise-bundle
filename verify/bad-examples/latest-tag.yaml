@@ -1,0 +1,20 @@
+# Deliberately violating manifest: a Pod using image with :latest tag.
+# Must be rejected by the candidate's `disallow-latest-tag` Kyverno policy.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: bad-latest-tag
+  namespace: sample-app
+  labels:
+    test: kyverno-violator
+spec:
+  containers:
+    - name: app
+      image: nginx:latest # deliberately :latest
+      resources:
+        limits:
+          cpu: 100m
+          memory: 64Mi
+        requests:
+          cpu: 50m
+          memory: 32Mi

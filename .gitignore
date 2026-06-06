@@ -1,0 +1,36 @@
+# Terraform
+**/.terraform/
+**/.terraform.lock.hcl
+**/terraform.tfstate
+**/terraform.tfstate.backup
+# Local backend stores state with a custom path; catch any *.tfstate at any depth.
+*.tfstate
+*.tfstate.backup
+**/terraform.tfvars
+**/backend.hcl
+**/tfplan
+**/tfplan.json
+crash.log
+crash.*.log
+
+# Kubeconfig / cluster state
+*.kubeconfig
+kubeconfig*
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*~
+
+# Python (checkov, etc.)
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Local secrets — should never be needed but defence in depth
+*.env
+.env.local
+secrets.*.yaml

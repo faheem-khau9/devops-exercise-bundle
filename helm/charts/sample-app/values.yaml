@@ -1,0 +1,59 @@
+# Default values for the sample-app chart.
+# DO NOT MODIFY this file. Override values in your env-specific values.*.yaml.
+
+image:
+  repository: traefik/whoami
+  tag: v1.10.4
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+service:
+  type: ClusterIP
+  port: 80
+
+# Required by the Kyverno require-resource-limits policy.
+# Your overlays may scale these but must not remove them.
+resources:
+  limits:
+    cpu: 200m
+    memory: 64Mi
+  requests:
+    cpu: 50m
+    memory: 32Mi
+
+# Non-root by default. The shipped image runs fine as non-root.
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# If your ExternalSecret produces a Secret with this name, the pod will mount
+# it as env vars. Leave empty to disable.
+envFromSecret: ""
+
+# Liveness / readiness probes. The whoami image listens on port 80.
+livenessProbe:
+  httpGet:
+    path: /
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+readinessProbe:
+  httpGet:
+    path: /
+    port: http
+  initialDelaySeconds: 2
+  periodSeconds: 5
+
+# Optional pod / container labels
+labels: {}
+
+# Optional nodeSelector / tolerations / affinity
+nodeSelector: {}
+tolerations: []
+affinity: {}

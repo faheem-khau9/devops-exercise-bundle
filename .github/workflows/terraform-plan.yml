@@ -1,0 +1,85 @@
+name: Terraform Plan & Policy
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  terraform-plan:
+    name: Terraform fmt / validate / tflint / plan / conftest / checkov
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.5"
+
+      - name: Install tflint
+        run: |
+          curl -s https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash
+          tflint --version
+
+      - name: Install Conftest
+        run: |
+          CONFTEST_VERSION="0.46.0"
+          curl -L "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz" \
+            | tar -xz conftest
+          sudo mv conftest /usr/local/bin/
+          conftest --version
+
+      - name: Install Checkov
+        run: pip install checkov
+
+      - name: Terraform fmt check
+        run: terraform fmt -check -recursive terraform/
+
+      - name: Terraform validate — envs/local
+        working-directory: terraform/envs/local
+        run: |
+          cp backend.hcl.example backend.hcl
+          cp terraform.tfvars.example terraform.tfvars
+          terraform init -backend-config=backend.hcl -input=false
+          terraform validate
+
+      - name: Terraform validate — envs/local-stage
+        working-directory: terraform/envs/local-stage
+        run: |
+          cp backend.hcl.example backend.hcl
+          cp terraform.tfvars.example terraform.tfvars
+          terraform init -backend-config=backend.hcl -input=false
+          terraform validate
+
+      - name: tflint — envs/local
+        working-directory: terraform/envs/local
+        run: |
+          tflint --init
+          tflint
+
+      - name: tflint — envs/local-stage
+        working-directory: terraform/envs/local-stage
+        run: |
+          tflint --init
+          tflint
+
+      - name: Terraform plan — envs/local
+        working-directory: terraform/envs/local
+        run: terraform plan -out=tfplan -input=false
+
+      - name: Conftest on Terraform plan
+        working-directory: terraform/envs/local
+        run: |
+          terraform show -json tfplan | \
+            conftest test --policy ../../../verify/policies/terraform/ -
+
+      - name: Checkov on terraform/
+        run: |
+          checkov -d terraform/ --quiet --compact \
+            --soft-fail-on LOW,MEDIUM \
+            --skip-check CKV_TF_1,CKV_TF_2 \
+            --output=cli

@@ -1,0 +1,32 @@
+# Local environment overlay.
+# Do not remove resources.limits, securityContext.runAsNonRoot, or the image tag —
+# the shipped Conftest helm policy will reject the rendered output if they are missing.
+
+replicaCount: 1
+
+image:
+  repository: traefik/whoami
+  tag: v1.10.4
+  pullPolicy: IfNotPresent
+
+resources:
+  limits:
+    cpu: 200m
+    memory: 64Mi
+  requests:
+    cpu: 50m
+    memory: 32Mi
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+envFromSecret: "sample-app-secret"
+
+labels:
+  environment: local

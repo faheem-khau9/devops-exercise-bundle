@@ -1,0 +1,8 @@
+# Backend configuration values for `terraform init -backend-config=backend.hcl`.
+# Copy to backend.hcl (gitignored) and fill in your local path.
+#
+# Each env directory expects its own backend.hcl pointing at a unique state file:
+#   terraform/envs/local/backend.hcl       -> path = "../../../local.tfstate"
+#   terraform/envs/local-stage/backend.hcl -> path = "../../../local-stage.tfstate"
+
+path = "../../../local.tfstate"

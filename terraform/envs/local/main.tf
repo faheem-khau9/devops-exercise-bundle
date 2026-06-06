@@ -1,0 +1,278 @@
+# ── Cluster ──────────────────────────────────────────────────────────────────
+
+module "cluster" {
+  source = "../../modules/kind-cluster"
+
+  cluster_name       = var.cluster_name
+  node_count         = var.node_count
+  kubernetes_version = var.kubernetes_version
+}
+
+# ── Provider configuration (uses the kubeconfig from kind) ───────────────────
+
+provider "helm" {
+  kubernetes {
+    config_path = module.cluster.kubeconfig_path
+  }
+}
+
+provider "kubectl" {
+  config_path = module.cluster.kubeconfig_path
+}
+
+provider "kubernetes" {
+  config_path = module.cluster.kubeconfig_path
+}
+
+# ── cert-manager (ArgoCD dependency) ─────────────────────────────────────────
+
+resource "helm_release" "cert_manager" {
+  name             = "cert-manager"
+  repository       = "https://charts.jetstack.io"
+  chart            = "cert-manager"
+  version          = "1.14.4"
+  namespace        = "cert-manager"
+  create_namespace = true
+
+  set {
+    name  = "installCRDs"
+    value = "true"
+  }
+
+  depends_on = [module.cluster]
+}
+
+# ── ArgoCD ────────────────────────────────────────────────────────────────────
+
+resource "helm_release" "argocd" {
+  name             = "argocd"
+  repository       = "https://argoproj.github.io/argo-helm"
+  chart            = "argo-cd"
+  version          = "6.7.3"
+  namespace        = "argocd"
+  create_namespace = true
+
+  set {
+    name  = "server.service.type"
+    value = "ClusterIP"
+  }
+
+  depends_on = [module.cluster, helm_release.cert_manager]
+}
+
+# ── External Secrets Operator ─────────────────────────────────────────────────
+
+resource "helm_release" "external_secrets" {
+  name             = "external-secrets"
+  repository       = "https://charts.external-secrets.io"
+  chart            = "external-secrets"
+  version          = "0.9.13"
+  namespace        = "external-secrets"
+  create_namespace = true
+
+  depends_on = [module.cluster]
+}
+
+# ── Kyverno ───────────────────────────────────────────────────────────────────
+
+resource "helm_release" "kyverno" {
+  name             = "kyverno"
+  repository       = "https://kyverno.github.io/kyverno/"
+  chart            = "kyverno"
+  version          = "3.1.4"
+  namespace        = "kyverno"
+  create_namespace = true
+
+  depends_on = [module.cluster]
+}
+
+# ── Wait for ArgoCD to be ready before applying CRD resources ────────────────
+
+resource "null_resource" "wait_for_argocd" {
+  triggers = {
+    argocd_version = helm_release.argocd.version
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      export KUBECONFIG="${module.cluster.kubeconfig_path}"
+      kubectl -n argocd wait --for=condition=available --timeout=300s deployment/argocd-server
+      kubectl -n argocd wait --for=condition=available --timeout=300s deployment/argocd-repo-server
+      kubectl -n argocd wait --for=condition=available --timeout=300s deployment/argocd-application-controller 2>/dev/null || \
+        kubectl -n argocd wait --for=condition=available --timeout=300s statefulset/argocd-application-controller 2>/dev/null || true
+    EOT
+  }
+
+  depends_on = [helm_release.argocd]
+}
+
+# ── Wait for ESO to be ready ──────────────────────────────────────────────────
+
+resource "null_resource" "wait_for_eso" {
+  triggers = {
+    eso_version = helm_release.external_secrets.version
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      export KUBECONFIG="${module.cluster.kubeconfig_path}"
+      kubectl -n external-secrets wait --for=condition=available --timeout=180s deployment/external-secrets
+      kubectl -n external-secrets wait --for=condition=available --timeout=180s deployment/external-secrets-webhook
+    EOT
+  }
+
+  depends_on = [helm_release.external_secrets]
+}
+
+# ── Wait for Kyverno to be ready ──────────────────────────────────────────────
+
+resource "null_resource" "wait_for_kyverno" {
+  triggers = {
+    kyverno_version = helm_release.kyverno.version
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      export KUBECONFIG="${module.cluster.kubeconfig_path}"
+      kubectl -n kyverno wait --for=condition=available --timeout=300s deployment/kyverno-admission-controller
+    EOT
+  }
+
+  depends_on = [helm_release.kyverno]
+}
+
+# ── ESO: source Secret (acts as the "external" secret store) ─────────────────
+
+resource "kubernetes_secret" "app_secret_source" {
+  metadata {
+    name      = "app-secret-source"
+    namespace = "default"
+  }
+
+  data = {
+    app-key = "c2VjcmV0LXZhbHVl" # base64("secret-value") — not a real secret
+  }
+
+  depends_on = [module.cluster]
+}
+
+# ── ESO: ClusterSecretStore backed by local Kubernetes Secrets ────────────────
+
+resource "kubectl_manifest" "cluster_secret_store" {
+  yaml_body = <<-YAML
+    apiVersion: external-secrets.io/v1beta1
+    kind: ClusterSecretStore
+    metadata:
+      name: local-store
+    spec:
+      provider:
+        kubernetes:
+          remoteNamespace: default
+          auth:
+            serviceAccount:
+              name: external-secrets
+              namespace: external-secrets
+          server:
+            url: https://kubernetes.default.svc
+            caProvider:
+              type: ConfigMap
+              name: kube-root-ca.crt
+              namespace: default
+              key: ca.crt
+  YAML
+
+  depends_on = [null_resource.wait_for_eso]
+}
+
+# ── ESO: ExternalSecret in sample-app namespace ───────────────────────────────
+
+resource "kubernetes_namespace" "sample_app" {
+  metadata {
+    name = "sample-app"
+  }
+
+  depends_on = [module.cluster]
+}
+
+resource "kubectl_manifest" "external_secret" {
+  yaml_body = <<-YAML
+    apiVersion: external-secrets.io/v1beta1
+    kind: ExternalSecret
+    metadata:
+      name: sample-app-secret
+      namespace: sample-app
+    spec:
+      refreshInterval: 1m
+      secretStoreRef:
+        name: local-store
+        kind: ClusterSecretStore
+      target:
+        name: sample-app-secret
+        creationPolicy: Owner
+      data:
+        - secretKey: app-key
+          remoteRef:
+            key: app-secret-source
+            property: app-key
+  YAML
+
+  depends_on = [
+    kubectl_manifest.cluster_secret_store,
+    kubernetes_namespace.sample_app,
+  ]
+}
+
+# ── ArgoCD root Application (app-of-apps bootstrap) ───────────────────────────
+
+resource "kubectl_manifest" "argocd_root_project" {
+  yaml_body = <<-YAML
+    apiVersion: argoproj.io/v1alpha1
+    kind: AppProject
+    metadata:
+      name: root
+      namespace: argocd
+    spec:
+      description: Root app-of-apps project
+      sourceRepos:
+        - "${var.git_repo_url}"
+      destinations:
+        - server: https://kubernetes.default.svc
+          namespace: argocd
+      clusterResourceWhitelist:
+        - group: "*"
+          kind: "*"
+      namespaceResourceWhitelist:
+        - group: "*"
+          kind: "*"
+  YAML
+
+  depends_on = [null_resource.wait_for_argocd]
+}
+
+resource "kubectl_manifest" "argocd_root_app" {
+  yaml_body = <<-YAML
+    apiVersion: argoproj.io/v1alpha1
+    kind: Application
+    metadata:
+      name: root
+      namespace: argocd
+    spec:
+      project: root
+      source:
+        repoURL: "${var.git_repo_url}"
+        targetRevision: HEAD
+        path: argocd/apps
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: argocd
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+  YAML
+
+  depends_on = [kubectl_manifest.argocd_root_project]
+}

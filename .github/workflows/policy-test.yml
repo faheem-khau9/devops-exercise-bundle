@@ -1,0 +1,51 @@
+name: Policy Tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  policy-test:
+    name: Conftest on ArgoCD + Helm
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: "v3.14.3"
+
+      - name: Install Conftest
+        run: |
+          CONFTEST_VERSION="0.46.0"
+          curl -L "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz" \
+            | tar -xz conftest
+          sudo mv conftest /usr/local/bin/
+          conftest --version
+
+      - name: Conftest on ArgoCD Application manifests
+        run: |
+          conftest test --policy verify/policies/argocd/ argocd/apps/*.yaml
+
+      - name: Helm lint — sample-app
+        run: helm lint helm/charts/sample-app --values helm/charts/sample-app/values.local.yaml
+
+      - name: Helm lint — kyverno-policies
+        run: helm lint helm/charts/kyverno-policies
+
+      - name: Conftest on rendered sample-app (local values)
+        run: |
+          helm template sample-app helm/charts/sample-app \
+            --values helm/charts/sample-app/values.local.yaml | \
+            conftest test --policy verify/policies/helm/ -
+
+      - name: Conftest on rendered sample-app (local-stage values)
+        run: |
+          helm template sample-app helm/charts/sample-app \
+            --values helm/charts/sample-app/values.local-stage.yaml | \
+            conftest test --policy verify/policies/helm/ -
