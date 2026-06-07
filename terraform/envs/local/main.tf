@@ -175,17 +175,17 @@ resource "null_resource" "wait_for_kyverno" {
 resource "kubernetes_secret" "app_secret_source" {
   metadata {
     name      = "app-secret-source"
-    namespace = "default"
+    namespace = "external-secrets"
   }
 
   data = {
     app-key = "c2VjcmV0LXZhbHVl" # base64("secret-value") — not a real secret
   }
 
-  depends_on = [module.cluster]
+  depends_on = [helm_release.external_secrets]
 }
 
-# ── ESO: ClusterSecretStore + ExternalSecret (applied via kubectl to avoid
+# ── ESO: ClusterSecretStore + ExternalSecret (via kubectl_manifest to avoid
 #    provider REST-mapper cache issues when CRDs are installed in the same apply)
 
 resource "kubernetes_namespace" "sample_app" {
@@ -196,76 +196,56 @@ resource "kubernetes_namespace" "sample_app" {
   depends_on = [module.cluster]
 }
 
-resource "null_resource" "eso_manifests" {
-  triggers = {
-    eso_version    = helm_release.external_secrets.version
-    cluster_name   = var.cluster_name
-  }
-
-  provisioner "local-exec" {
-    command = <<-'SCRIPT'
-      set -e
-      export KUBECONFIG="${KUBECONFIG_PATH}"
-
-      cat > /tmp/eso-clustersecretstore.yaml <<'EOF'
-apiVersion: external-secrets.io/v1beta1
-kind: ClusterSecretStore
-metadata:
-  name: local-store
-spec:
-  provider:
-    kubernetes:
-      remoteNamespace: default
-      auth:
-        serviceAccount:
-          name: external-secrets
-          namespace: external-secrets
-      server:
-        url: https://kubernetes.default.svc
-        caProvider:
-          type: ConfigMap
-          name: kube-root-ca.crt
-          namespace: default
-          key: ca.crt
-EOF
-
-      cat > /tmp/eso-externalsecret.yaml <<'EOF'
-apiVersion: external-secrets.io/v1beta1
-kind: ExternalSecret
-metadata:
-  name: sample-app-secret
-  namespace: sample-app
-spec:
-  refreshInterval: 1m
-  secretStoreRef:
-    name: local-store
+resource "kubectl_manifest" "cluster_secret_store" {
+  yaml_body = <<-YAML
+    apiVersion: external-secrets.io/v1beta1
     kind: ClusterSecretStore
-  target:
-    name: sample-app-secret
-    creationPolicy: Owner
-  data:
-    - secretKey: app-key
-      remoteRef:
-        key: app-secret-source
-        property: app-key
-EOF
+    metadata:
+      name: local-store
+    spec:
+      provider:
+        kubernetes:
+          remoteNamespace: external-secrets
+          auth:
+            serviceAccount:
+              name: external-secrets
+              namespace: external-secrets
+          server:
+            url: https://kubernetes.default.svc
+            caProvider:
+              type: ConfigMap
+              name: kube-root-ca.crt
+              namespace: default
+              key: ca.crt
+  YAML
 
-      # deployment/Available fires before the ESO webhook is fully registered.
-      # Retry the ClusterSecretStore apply until the webhook accepts it.
-      until kubectl apply -f /tmp/eso-clustersecretstore.yaml; do
-        echo "ESO webhook not ready, retrying in 5s..." && sleep 5
-      done
+  depends_on = [null_resource.wait_for_eso]
+}
 
-      kubectl apply -f /tmp/eso-externalsecret.yaml
-    SCRIPT
-
-    environment = {
-      KUBECONFIG_PATH = module.cluster.kubeconfig_path
-    }
-  }
+resource "kubectl_manifest" "external_secret" {
+  yaml_body = <<-YAML
+    apiVersion: external-secrets.io/v1beta1
+    kind: ExternalSecret
+    metadata:
+      name: sample-app-secret
+      namespace: sample-app
+    spec:
+      refreshInterval: 1m
+      secretStoreRef:
+        name: local-store
+        kind: ClusterSecretStore
+      target:
+        name: sample-app-secret
+        creationPolicy: Owner
+      data:
+        - secretKey: app-key
+          remoteRef:
+            key: app-secret-source
+            property: app-key
+  YAML
 
   depends_on = [
-    null_resource.wait_for_eso,
+    kubectl_manifest.cluster_secret_store,
     kubernetes_namespace.sample_app,
     kubernetes_secret.app_secret_source,
   ]

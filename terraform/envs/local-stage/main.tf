@@ -160,14 +160,14 @@ resource "null_resource" "wait_for_kyverno" {
 resource "kubernetes_secret" "app_secret_source" {
   metadata {
     name      = "app-secret-source"
-    namespace = "default"
+    namespace = "external-secrets"
   }
 
   data = {
     app-key = "c2VjcmV0LXZhbHVl"
   }
 
-  depends_on = [null_resource.helm_repos]
+  depends_on = [helm_release.external_secrets]
 }
 
 # ── ClusterSecretStore ────────────────────────────────────────────────────────
@@ -181,7 +181,7 @@ resource "kubectl_manifest" "cluster_secret_store" {
     spec:
       provider:
         kubernetes:
-          remoteNamespace: default
+          remoteNamespace: external-secrets
           auth:
             serviceAccount:
               name: external-secrets
