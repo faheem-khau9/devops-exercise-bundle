@@ -75,9 +75,9 @@ spec:
             deny:
               conditions:
                 any:
-                  - key: "{{ `{{element.image}}` }}"
+                  - key: "{{ `{{ regex_match('^.*:latest$', element.image) }}` }}"
                     operator: Equals
-                    value: "*:latest"
-                  - key: "{{ `{{element.image}}` }}"
-                    operator: NotContains
-                    value: ":"
+                    value: true
+                  - key: "{{ `{{ regex_match('^[^:]+$', element.image) }}` }}"
+                    operator: Equals
+                    value: true

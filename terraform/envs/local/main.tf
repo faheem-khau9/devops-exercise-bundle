@@ -99,6 +99,17 @@ resource "helm_release" "kyverno" {
   namespace        = "kyverno"
   create_namespace = true
 
+  # bitnami/kubectl was removed from Docker Hub; disable non-critical cleanup CronJobs
+  # These just trim excess admission reports and are not needed for the exercise
+  set {
+    name  = "cleanupController.cleanupJobs.admissionReports.enabled"
+    value = "false"
+  }
+  set {
+    name  = "cleanupController.cleanupJobs.clusterAdmissionReports.enabled"
+    value = "false"
+  }
+
   depends_on = [null_resource.helm_repos]
 }
 
@@ -174,35 +185,8 @@ resource "kubernetes_secret" "app_secret_source" {
   depends_on = [module.cluster]
 }
 
-# ── ESO: ClusterSecretStore backed by local Kubernetes Secrets ────────────────
-
-resource "kubectl_manifest" "cluster_secret_store" {
-  yaml_body = <<-YAML
-    apiVersion: external-secrets.io/v1beta1
-    kind: ClusterSecretStore
-    metadata:
-      name: local-store
-    spec:
-      provider:
-        kubernetes:
-          remoteNamespace: default
-          auth:
-            serviceAccount:
-              name: external-secrets
-              namespace: external-secrets
-          server:
-            url: https://kubernetes.default.svc
-            caProvider:
-              type: ConfigMap
-              name: kube-root-ca.crt
-              namespace: default
-              key: ca.crt
-  YAML
-
-  depends_on = [null_resource.wait_for_eso]
-}
-
-# ── ESO: ExternalSecret in sample-app namespace ───────────────────────────────
+# ── ESO: ClusterSecretStore + ExternalSecret (applied via kubectl to avoid
+#    provider REST-mapper cache issues when CRDs are installed in the same apply)
 
 resource "kubernetes_namespace" "sample_app" {
   metadata {
@@ -212,85 +196,174 @@ resource "kubernetes_namespace" "sample_app" {
   depends_on = [module.cluster]
 }
 
-resource "kubectl_manifest" "external_secret" {
-  yaml_body = <<-YAML
-    apiVersion: external-secrets.io/v1beta1
-    kind: ExternalSecret
-    metadata:
-      name: sample-app-secret
-      namespace: sample-app
-    spec:
-      refreshInterval: 1m
-      secretStoreRef:
-        name: local-store
-        kind: ClusterSecretStore
-      target:
-        name: sample-app-secret
-        creationPolicy: Owner
-      data:
-        - secretKey: app-key
-          remoteRef:
-            key: app-secret-source
-            property: app-key
-  YAML
+resource "null_resource" "eso_manifests" {
+  triggers = {
+    eso_version    = helm_release.external_secrets.version
+    cluster_name   = var.cluster_name
+  }
+
+  provisioner "local-exec" {
+    command = <<-'SCRIPT'
+      set -e
+      export KUBECONFIG="${KUBECONFIG_PATH}"
+
+      cat > /tmp/eso-clustersecretstore.yaml <<'EOF'
+apiVersion: external-secrets.io/v1beta1
+kind: ClusterSecretStore
+metadata:
+  name: local-store
+spec:
+  provider:
+    kubernetes:
+      remoteNamespace: default
+      auth:
+        serviceAccount:
+          name: external-secrets
+          namespace: external-secrets
+      server:
+        url: https://kubernetes.default.svc
+        caProvider:
+          type: ConfigMap
+          name: kube-root-ca.crt
+          namespace: default
+          key: ca.crt
+EOF
+
+      cat > /tmp/eso-externalsecret.yaml <<'EOF'
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: sample-app-secret
+  namespace: sample-app
+spec:
+  refreshInterval: 1m
+  secretStoreRef:
+    name: local-store
+    kind: ClusterSecretStore
+  target:
+    name: sample-app-secret
+    creationPolicy: Owner
+  data:
+    - secretKey: app-key
+      remoteRef:
+        key: app-secret-source
+        property: app-key
+EOF
+
+      # deployment/Available fires before the ESO webhook is fully registered.
+      # Retry the ClusterSecretStore apply until the webhook accepts it.
+      until kubectl apply -f /tmp/eso-clustersecretstore.yaml; do
+        echo "ESO webhook not ready, retrying in 5s..." && sleep 5
+      done
+
+      kubectl apply -f /tmp/eso-externalsecret.yaml
+    SCRIPT
+
+    environment = {
+      KUBECONFIG_PATH = module.cluster.kubeconfig_path
+    }
+  }
 
   depends_on = [
-    kubectl_manifest.cluster_secret_store,
+    null_resource.wait_for_eso,
     kubernetes_namespace.sample_app,
+    kubernetes_secret.app_secret_source,
   ]
 }
 
-# ── ArgoCD root Application (app-of-apps bootstrap) ───────────────────────────
+# ── ArgoCD root AppProject + Application (applied via kubectl for same reason) ─
 
-resource "kubectl_manifest" "argocd_root_project" {
-  yaml_body = <<-YAML
-    apiVersion: argoproj.io/v1alpha1
-    kind: AppProject
-    metadata:
-      name: root
+resource "null_resource" "argocd_bootstrap" {
+  triggers = {
+    argocd_version = helm_release.argocd.version
+    git_repo_url   = var.git_repo_url
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      set -e
+      export KUBECONFIG="${module.cluster.kubeconfig_path}"
+      kubectl wait --for=condition=established --timeout=120s crd/appprojects.argoproj.io
+      kubectl wait --for=condition=established --timeout=120s crd/applications.argoproj.io
+
+      # Apply root AppProject first (root Application depends on it)
+      kubectl apply -f - <<YAML
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: root
+  namespace: argocd
+spec:
+  description: Root app-of-apps project
+  sourceRepos:
+    - "${var.git_repo_url}"
+  destinations:
+    - server: https://kubernetes.default.svc
       namespace: argocd
-    spec:
-      description: Root app-of-apps project
-      sourceRepos:
-        - "${var.git_repo_url}"
-      destinations:
-        - server: https://kubernetes.default.svc
-          namespace: argocd
-      clusterResourceWhitelist:
-        - group: "*"
-          kind: "*"
-      namespaceResourceWhitelist:
-        - group: "*"
-          kind: "*"
-  YAML
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+YAML
+
+      # Apply sample-app AppProject — child Applications reference project: sample-app
+      # This project lives in argocd/projects/ which is outside the root app's watched path,
+      # so it must be bootstrapped here rather than discovered by the app-of-apps.
+      kubectl apply -f - <<YAML
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: sample-app
+  namespace: argocd
+spec:
+  description: AppProject for the sample application (local + stage)
+  sourceRepos:
+    - "${var.git_repo_url}"
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: sample-app
+    - server: https://kubernetes.default.svc
+      namespace: sample-app-stage
+    - server: https://kubernetes.default.svc
+      namespace: kyverno
+  clusterResourceWhitelist:
+    - group: "kyverno.io"
+      kind: ClusterPolicy
+    - group: "kyverno.io"
+      kind: ClusterCleanupPolicy
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+YAML
+
+      # Apply the root Application (app-of-apps — watches argocd/apps/)
+      kubectl apply -f - <<YAML
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+spec:
+  project: root
+  source:
+    repoURL: "${var.git_repo_url}"
+    targetRevision: HEAD
+    path: argocd/apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+YAML
+    EOT
+  }
 
   depends_on = [null_resource.wait_for_argocd]
-}
-
-resource "kubectl_manifest" "argocd_root_app" {
-  yaml_body = <<-YAML
-    apiVersion: argoproj.io/v1alpha1
-    kind: Application
-    metadata:
-      name: root
-      namespace: argocd
-    spec:
-      project: root
-      source:
-        repoURL: "${var.git_repo_url}"
-        targetRevision: HEAD
-        path: argocd/apps
-      destination:
-        server: https://kubernetes.default.svc
-        namespace: argocd
-      syncPolicy:
-        automated:
-          prune: true
-          selfHeal: true
-        syncOptions:
-          - CreateNamespace=true
-          - ServerSideApply=true
-  YAML
-
-  depends_on = [kubectl_manifest.argocd_root_project]
 }
