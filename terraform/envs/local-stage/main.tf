@@ -99,6 +99,14 @@ resource "helm_release" "kyverno" {
   namespace        = "kyverno"
   create_namespace = true
 
+  # bitnami/kubectl was removed from Docker Hub; the cleanupController and its
+  # post-upgrade hooks use that image.  Disable the entire controller — it only
+  # trims stale admission reports and is not needed for the exercise.
+  set {
+    name  = "cleanupController.enabled"
+    value = "false"
+  }
+
   depends_on = [null_resource.helm_repos]
 }
 

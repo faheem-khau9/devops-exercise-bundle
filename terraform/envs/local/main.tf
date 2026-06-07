@@ -99,14 +99,11 @@ resource "helm_release" "kyverno" {
   namespace        = "kyverno"
   create_namespace = true
 
-  # bitnami/kubectl was removed from Docker Hub; disable non-critical cleanup CronJobs
-  # These just trim excess admission reports and are not needed for the exercise
+  # bitnami/kubectl was removed from Docker Hub; the cleanupController and its
+  # post-upgrade hooks use that image.  Disable the entire controller — it only
+  # trims stale admission reports and is not needed for the exercise.
   set {
-    name  = "cleanupController.cleanupJobs.admissionReports.enabled"
-    value = "false"
-  }
-  set {
-    name  = "cleanupController.cleanupJobs.clusterAdmissionReports.enabled"
+    name  = "cleanupController.enabled"
     value = "false"
   }
 
