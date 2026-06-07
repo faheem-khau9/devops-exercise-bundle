@@ -39,33 +39,38 @@ resource "kubectl_manifest" "application" {
       name      = var.app_name
       namespace = "argocd"
     }
-    spec = {
-      project = var.project_name
-      source = merge(
-        {
-          repoURL        = var.repo_url
-          targetRevision = var.source_target_revision
-          path           = var.chart_path
-        },
-        var.values_file != "" ? {
-          helm = {
-            releaseName = local.release_name
-            valueFiles  = [var.values_file]
-          }
-        } : {}
-      )
-      destination = {
-        server    = var.destination_server
-        namespace = var.target_namespace
-      }
-      syncPolicy = {
-        automated = {
-          prune    = var.automated_prune
-          selfHeal = var.automated_self_heal
+    spec = merge(
+      {
+        project = var.project_name
+        source = merge(
+          {
+            repoURL        = var.repo_url
+            targetRevision = var.source_target_revision
+            path           = var.chart_path
+          },
+          var.values_file != "" ? {
+            helm = {
+              releaseName = local.release_name
+              valueFiles  = [var.values_file]
+            }
+          } : {}
+        )
+        destination = {
+          server    = var.destination_server
+          namespace = var.target_namespace
         }
-        syncOptions = var.sync_options
-      }
-    }
+        syncPolicy = {
+          automated = {
+            prune    = var.automated_prune
+            selfHeal = var.automated_self_heal
+          }
+          syncOptions = var.sync_options
+        }
+      },
+      length(var.ignore_differences) > 0 ? {
+        ignoreDifferences = var.ignore_differences
+      } : {}
+    )
   })
 
   depends_on = [kubectl_manifest.app_project]

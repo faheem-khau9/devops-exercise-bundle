@@ -290,3 +290,55 @@ resource "kubectl_manifest" "argocd_root_app" {
 
   depends_on = [kubectl_manifest.argocd_root_project]
 }
+
+# ── sample-app AppProject (required by GitOps-managed Applications) ───────────
+
+resource "kubectl_manifest" "argocd_sample_app_project" {
+  yaml_body = <<-YAML
+    apiVersion: argoproj.io/v1alpha1
+    kind: AppProject
+    metadata:
+      name: sample-app
+      namespace: argocd
+    spec:
+      description: AppProject for the sample application (local-stage)
+      sourceRepos:
+        - "${var.git_repo_url}"
+      destinations:
+        - server: https://kubernetes.default.svc
+          namespace: sample-app
+        - server: https://kubernetes.default.svc
+          namespace: sample-app-stage
+      clusterResourceWhitelist:
+        - group: ""
+          kind: Namespace
+      namespaceResourceWhitelist:
+        - group: "*"
+          kind: "*"
+  YAML
+
+  depends_on = [null_resource.wait_for_argocd]
+}
+
+# ── kyverno-policies ArgoCD Application (via argocd-app module) ──────────────
+
+module "kyverno_policies" {
+  source = "../../modules/argocd-app"
+
+  app_name          = "kyverno-policies"
+  repo_url          = var.git_repo_url
+  chart_path        = "helm/charts/kyverno-policies"
+  target_namespace  = "kyverno"
+  project_name      = "kyverno-policies"
+  helm_release_name = "kyverno-policies"
+
+  ignore_differences = [
+    {
+      group             = "kyverno.io"
+      kind              = "ClusterPolicy"
+      jqPathExpressions = [".spec.admission", ".spec.rules[].skipBackgroundRequests"]
+    }
+  ]
+
+  depends_on = [null_resource.wait_for_argocd, null_resource.wait_for_kyverno]
+}

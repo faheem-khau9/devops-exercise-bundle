@@ -306,15 +306,9 @@ spec:
       namespace: sample-app
     - server: https://kubernetes.default.svc
       namespace: sample-app-stage
-    - server: https://kubernetes.default.svc
-      namespace: kyverno
   clusterResourceWhitelist:
     - group: ""
       kind: Namespace
-    - group: "kyverno.io"
-      kind: ClusterPolicy
-    - group: "kyverno.io"
-      kind: ClusterCleanupPolicy
   namespaceResourceWhitelist:
     - group: "*"
       kind: "*"
@@ -348,4 +342,27 @@ YAML
   }
 
   depends_on = [null_resource.wait_for_argocd]
+}
+
+# ── kyverno-policies ArgoCD Application (via argocd-app module) ──────────────
+
+module "kyverno_policies" {
+  source = "../../modules/argocd-app"
+
+  app_name          = "kyverno-policies"
+  repo_url          = var.git_repo_url
+  chart_path        = "helm/charts/kyverno-policies"
+  target_namespace  = "kyverno"
+  project_name      = "kyverno-policies"
+  helm_release_name = "kyverno-policies"
+
+  ignore_differences = [
+    {
+      group             = "kyverno.io"
+      kind              = "ClusterPolicy"
+      jqPathExpressions = [".spec.admission", ".spec.rules[].skipBackgroundRequests"]
+    }
+  ]
+
+  depends_on = [null_resource.argocd_bootstrap, null_resource.wait_for_kyverno]
 }

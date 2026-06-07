@@ -81,3 +81,13 @@ variable "project_destination_namespaces" {
   description = "Namespaces the AppProject allows as destinations."
   default     = []
 }
+
+variable "ignore_differences" {
+  type = list(object({
+    group             = string
+    kind              = string
+    jqPathExpressions = optional(list(string), [])
+  }))
+  description = "Fields ArgoCD should ignore when diffing live state against Git."
+  default     = []
+}
