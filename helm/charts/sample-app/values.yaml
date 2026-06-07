@@ -8,6 +8,17 @@ image:
 
 replicaCount: 1
 
+# Port the container listens on internally. Kept at 8080 so the app runs as
+# non-root without needing NET_BIND_SERVICE. The Service still exposes port 80
+# and maps it to this containerPort via the named "http" port.
+containerPort: 8080
+
+# Args passed to the container entrypoint. Used to tell whoami which port to
+# bind, matching containerPort above.
+args:
+  - --port
+  - "8080"
+
 service:
   type: ClusterIP
   port: 80
@@ -22,7 +33,7 @@ resources:
     cpu: 50m
     memory: 32Mi
 
-# Non-root by default. The shipped image runs fine as non-root.
+# Non-root by default. App runs on containerPort 8080, so no NET_BIND_SERVICE needed.
 securityContext:
   runAsNonRoot: true
   runAsUser: 65532

@@ -21,6 +21,10 @@ spec:
         - name: app
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.args }}
+          args:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           securityContext:
             allowPrivilegeEscalation: {{ .Values.securityContext.allowPrivilegeEscalation }}
             readOnlyRootFilesystem: {{ .Values.securityContext.readOnlyRootFilesystem }}
@@ -30,7 +34,7 @@ spec:
               {{- toYaml .Values.securityContext.capabilities | nindent 14 }}
           ports:
             - name: http
-              containerPort: 80
+              containerPort: {{ .Values.containerPort | default 80 }}
               protocol: TCP
           {{- with .Values.livenessProbe }}
           livenessProbe:
