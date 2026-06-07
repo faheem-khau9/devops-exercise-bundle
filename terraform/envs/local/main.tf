@@ -329,6 +329,8 @@ spec:
     - server: https://kubernetes.default.svc
       namespace: kyverno
   clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
     - group: "kyverno.io"
       kind: ClusterPolicy
     - group: "kyverno.io"
