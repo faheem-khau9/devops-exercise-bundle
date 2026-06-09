@@ -167,6 +167,31 @@ resource "null_resource" "wait_for_kyverno" {
   depends_on = [helm_release.kyverno]
 }
 
+# ── Allow API discovery cache to settle before kubectl_manifest applies ───────
+
+resource "null_resource" "wait_for_crds" {
+  triggers = {
+    argocd_version = helm_release.argocd.version
+    eso_version    = helm_release.external_secrets.version
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      export KUBECONFIG="${module.cluster.kubeconfig_path}"
+      for crd in clustersecretstores.external-secrets.io externalsecrets.external-secrets.io applications.argoproj.io appprojects.argoproj.io; do
+        kubectl wait --for=condition=established --timeout=180s "crd/$crd"
+      done
+      sleep 10
+    EOT
+  }
+
+  depends_on = [
+    null_resource.wait_for_argocd,
+    null_resource.wait_for_eso,
+    null_resource.wait_for_kyverno,
+  ]
+}
+
 # ── ESO: source Secret (acts as the "external" secret store) ─────────────────
 
 resource "kubernetes_secret" "app_secret_source" {
@@ -216,7 +241,7 @@ resource "kubectl_manifest" "cluster_secret_store" {
               key: ca.crt
   YAML
 
-  depends_on = [null_resource.wait_for_eso]
+  depends_on = [null_resource.wait_for_crds]
 }
 
 resource "kubectl_manifest" "external_secret" {
@@ -244,6 +269,43 @@ resource "kubectl_manifest" "external_secret" {
   depends_on = [
     kubectl_manifest.cluster_secret_store,
     kubernetes_namespace.sample_app,
+    kubernetes_secret.app_secret_source,
+  ]
+}
+
+resource "kubernetes_namespace" "sample_app_stage" {
+  metadata {
+    name = "sample-app-stage"
+  }
+
+  depends_on = [module.cluster]
+}
+
+resource "kubectl_manifest" "external_secret_stage" {
+  yaml_body = <<-YAML
+    apiVersion: external-secrets.io/v1beta1
+    kind: ExternalSecret
+    metadata:
+      name: sample-app-secret
+      namespace: sample-app-stage
+    spec:
+      refreshInterval: 1m
+      secretStoreRef:
+        name: local-store
+        kind: ClusterSecretStore
+      target:
+        name: sample-app-secret
+        creationPolicy: Owner
+      data:
+        - secretKey: app-key
+          remoteRef:
+            key: app-secret-source
+            property: app-key
+  YAML
+
+  depends_on = [
+    kubectl_manifest.cluster_secret_store,
+    kubernetes_namespace.sample_app_stage,
     kubernetes_secret.app_secret_source,
   ]
 }
@@ -338,7 +400,7 @@ YAML
     EOT
   }
 
-  depends_on = [null_resource.wait_for_argocd]
+  depends_on = [null_resource.wait_for_crds]
 }
 
 # ── kyverno-policies ArgoCD Application (via argocd-app module) ──────────────

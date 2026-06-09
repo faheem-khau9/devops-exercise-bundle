@@ -2,7 +2,7 @@
 # Top-level entry points. The candidate fills in the Terraform / ArgoCD / Helm pieces;
 # the harness (`make verify`) is shipped as-is.
 
-.PHONY: setup plan apply verify destroy clean help
+.PHONY: setup plan apply verify destroy clean help sync-git wire-argocd
 
 # Path to the candidate's primary env. Override if your layout differs.
 ENV_DIR ?= terraform/envs/local
@@ -11,8 +11,9 @@ help:
 	@echo "Available targets:"
 	@echo "  make setup     - check required tools are installed (does not install)"
 	@echo "  make plan      - terraform plan in $(ENV_DIR)"
-	@echo "  make apply     - terraform apply in $(ENV_DIR) (full bring-up)"
-	@echo "  make verify    - run the full 16-check verification harness"
+	@echo "  make apply     - setup + sync-git + terraform apply (full bring-up)"
+	@echo "  make verify    - setup + sync-git + full 16-check verification harness"
+	@echo "  make sync-git  - wire argocd URLs from tfvars and push to origin"
 	@echo "  make destroy   - terraform destroy in $(ENV_DIR)"
 	@echo "  make clean     - destroy + remove temp files"
 
@@ -31,14 +32,21 @@ setup:
 	  fi; \
 	done
 
-plan:
-	@cd $(ENV_DIR) && terraform init -backend-config=backend.hcl && terraform plan -out=tfplan
+wire-argocd:
+	@ENV_DIR=$(ENV_DIR) bash scripts/wire-argocd.sh
 
-apply:
-	@cd $(ENV_DIR) && terraform init -backend-config=backend.hcl && terraform apply -auto-approve -parallelism=3
+sync-git: setup
+	@ENV_DIR=$(ENV_DIR) bash scripts/sync-git.sh
 
-verify:
-	@bash verify/verify.sh
+plan: setup
+	@cd $(ENV_DIR) && terraform init -backend-config=backend.hcl -input=false && terraform plan -out=tfplan -input=false
+
+apply: sync-git
+	@cd $(ENV_DIR) && terraform init -backend-config=backend.hcl -input=false
+	@cd $(ENV_DIR) && terraform apply -auto-approve -input=false -parallelism=3
+
+verify: sync-git
+	@ENV_DIR=$(ENV_DIR) bash verify/verify.sh
 
 destroy:
 	@cd $(ENV_DIR) && terraform destroy -auto-approve

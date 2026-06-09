@@ -19,22 +19,31 @@ Minimum versions: Terraform 1.6+, Helm 3.13+, kubectl 1.28+, kind 0.20+, Docker 
 
 ### Quick start
 
+Prerequisites: tools on PATH (see below), Docker with **≥ 8 GB RAM**, and a **public Git remote** (`origin`) with push credentials configured.
+
 ```bash
 git clone https://github.com/faheem-khau9/devops-exercise-bundle.git
 cd devops-exercise-bundle
 
-make setup    # checks tools + copies *.example files
-make verify   # runs all 16 checks (KEEP=1 make verify to keep cluster after passing)
+make apply    # one command: setup → wire argocd URLs → git push → terraform apply
+# or
+make verify   # setup → sync-git → full 16-check pipeline (auto-destroys on success)
+make destroy  # tear down the kind cluster
 ```
+
+Set `git_repo_url` in `terraform/envs/local/terraform.tfvars` (copied from `.example` on first run). The `scripts/wire-argocd.sh` helper reads that value and updates all `argocd/**/*.yaml` before push — no manual `sed` required.
+
+Use `KEEP=1 make verify` to keep the cluster running after a passing run. Override the environment with `ENV_DIR=terraform/envs/local-stage make apply`.
 
 ### Makefile targets
 
 | Target | Effect |
 |--------|--------|
 | `make setup` | Verify tools on PATH; copy `*.example` → real config files |
-| `make plan` | `terraform plan` in `envs/local` |
-| `make apply` | Full cluster bring-up |
-| `make verify` | 16-check pipeline |
+| `make sync-git` | Wire `argocd/` URLs from tfvars and push `argocd/` + `helm/` to `origin` |
+| `make plan` | `setup` + `terraform plan` in `envs/local` |
+| `make apply` | `sync-git` + full cluster bring-up (`terraform apply -parallelism=3`) |
+| `make verify` | `sync-git` + 16-check pipeline |
 | `make destroy` | Tear down kind cluster |
 | `make clean` | Destroy + remove `.terraform/`, lock files, kubeconfigs |
 
@@ -119,7 +128,7 @@ Uses `gavinbunney/kubectl` provider — avoids CRD-at-plan-time failures with `h
 
 ## Secrets Approach
 
-ESO is installed via Terraform. A `ClusterSecretStore` named `local-store` uses the `kubernetes` provider, reading from a source Secret in the `default` namespace. An `ExternalSecret` in `sample-app` pulls `app-key` from that store and ESO creates a native `sample-app-secret` Secret the Deployment mounts.
+ESO is installed via Terraform. A `ClusterSecretStore` named `local-store` uses the Kubernetes provider, reading from a source Secret (`app-secret-source`) in the `external-secrets` namespace. `ExternalSecret` resources in `sample-app` and `sample-app-stage` pull `app-key` from that store; ESO creates native `sample-app-secret` Secrets the Deployments mount via `envFrom`.
 
 In production, the `ClusterSecretStore` would point at AWS Secrets Manager (with IRSA) or GCP Secret Manager (with WIF) rather than a local Kubernetes Secret.
 
