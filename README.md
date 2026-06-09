@@ -158,7 +158,7 @@ No secrets are committed in plaintext. `*.tfvars` and `backend.hcl` are gitignor
 
 This submission was built with **Claude Code** (Anthropic, claude-sonnet-4-6) as a pair-programmer.
 
-**What Claude generated:** Terraform module scaffolding (`kind-cluster`, `argocd-app`, both env compositions), ArgoCD YAML manifests, the `kyverno-policies` Helm chart, GitHub Actions workflow files, and this README structure.
+**What Claude generated:** Boiler plates for Terraform module scaffolding (`kind-cluster`, `argocd-app`, both env compositions), ArgoCD YAML manifests, the `kyverno-policies` Helm chart, GitHub Actions workflow files, and this README structure.
 
 **What was reviewed and adjusted:** All Kyverno `ClusterPolicy` rules were read against the `verify/bad-examples/` manifests to confirm rejection behaviour. The `gavinbunney/kubectl` provider choice was made after understanding the CRD-at-plan-time issue documented in §4.2. The `autogen-controllers: "none"` annotation was added after reading the ArgoCD drift warning in §6.1. The ESO `ClusterSecretStore` auth block was verified against ESO Kubernetes provider docs. Conftest policies were read directly to ensure field names and values matched exactly.
 
