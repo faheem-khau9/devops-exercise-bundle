@@ -58,6 +58,27 @@ resource "helm_release" "cert_manager" {
   depends_on = [null_resource.helm_repos]
 }
 
+# ── Pre-load ArgoCD images into Kind nodes to avoid slow/stuck quay.io pulls ──
+
+resource "null_resource" "preload_argocd_images" {
+  triggers = {
+    cluster_name  = module.cluster.cluster_name
+    argocd_tag    = "v2.10.4"
+    redis_tag     = "7.2.4-alpine"
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      docker pull --platform linux/amd64 quay.io/argoproj/argocd:v2.10.4
+      kind load docker-image quay.io/argoproj/argocd:v2.10.4 --name ${module.cluster.cluster_name}
+      docker pull --platform linux/amd64 redis:7.2.4-alpine
+      kind load docker-image redis:7.2.4-alpine --name ${module.cluster.cluster_name}
+    EOT
+  }
+
+  depends_on = [module.cluster]
+}
+
 # ── ArgoCD ────────────────────────────────────────────────────────────────────
 
 resource "helm_release" "argocd" {
@@ -67,13 +88,14 @@ resource "helm_release" "argocd" {
   version          = "6.7.3"
   namespace        = "argocd"
   create_namespace = true
+  timeout          = 600
 
   set {
     name  = "server.service.type"
     value = "ClusterIP"
   }
 
-  depends_on = [null_resource.helm_repos, helm_release.cert_manager]
+  depends_on = [null_resource.helm_repos, helm_release.cert_manager, null_resource.preload_argocd_images]
 }
 
 # ── External Secrets Operator ─────────────────────────────────────────────────
