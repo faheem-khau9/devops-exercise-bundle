@@ -58,21 +58,30 @@ resource "helm_release" "cert_manager" {
   depends_on = [null_resource.helm_repos]
 }
 
-# ── Pre-load ArgoCD images into Kind nodes to avoid slow/stuck quay.io pulls ──
+# ── Pre-load ArgoCD images into Kind nodes via docker save|import ─────────────
+# kind load docker-image uses --all-platforms which fails on Apple Silicon when
+# only one platform's layers are locally cached.  docker save|ctr import loads
+# only the locally-cached platform (arm64 or amd64) directly into containerd.
 
 resource "null_resource" "preload_argocd_images" {
   triggers = {
-    cluster_name  = module.cluster.cluster_name
-    argocd_tag    = "v2.10.4"
-    redis_tag     = "7.2.4-alpine"
+    cluster_name = module.cluster.cluster_name
+    argocd_tag   = "v2.10.4"
+    redis_tag    = "7.2.4-alpine"
   }
 
   provisioner "local-exec" {
     command = <<-EOT
-      docker pull --platform linux/amd64 quay.io/argoproj/argocd:v2.10.4
-      kind load docker-image quay.io/argoproj/argocd:v2.10.4 --name ${module.cluster.cluster_name}
-      docker pull --platform linux/amd64 redis:7.2.4-alpine
-      kind load docker-image redis:7.2.4-alpine --name ${module.cluster.cluster_name}
+      set +e
+      docker pull quay.io/argoproj/argocd:v2.10.4
+      docker pull redis:7.2.4-alpine
+      for node in $(kind get nodes --name ${module.cluster.cluster_name}); do
+        docker save quay.io/argoproj/argocd:v2.10.4 | \
+          docker exec -i "$node" ctr --namespace=k8s.io images import --snapshotter=overlayfs - || true
+        docker save redis:7.2.4-alpine | \
+          docker exec -i "$node" ctr --namespace=k8s.io images import --snapshotter=overlayfs - || true
+      done
+      exit 0
     EOT
   }
 
@@ -93,6 +102,17 @@ resource "helm_release" "argocd" {
   set {
     name  = "server.service.type"
     value = "ClusterIP"
+  }
+
+  # Use Docker Hub redis to avoid public ECR rate limits / auth failures
+  set {
+    name  = "redis.image.repository"
+    value = "redis"
+  }
+
+  set {
+    name  = "redis.image.tag"
+    value = "7.2.4-alpine"
   }
 
   depends_on = [null_resource.helm_repos, helm_release.cert_manager, null_resource.preload_argocd_images]
